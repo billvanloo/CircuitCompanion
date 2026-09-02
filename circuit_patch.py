@@ -73,6 +73,11 @@ def dump_request_bytes(location):
     return CIRCUIT_HEADER + (CMD_DUMP_REQUEST, location)
 
 
+def replace_current_patch_bytes(location, patch_data):
+    """Sysex data (without F0/F7) writing `patch_data` into a synth's live sound."""
+    return CIRCUIT_HEADER + (CMD_REPLACE_CURRENT, location, 0) + tuple(patch_data)
+
+
 def is_patch_dump(data):
     """True if `data` (bytes between F0 and F7) is a Replace Current Patch dump."""
     return (len(data) == DUMP_DATA_LEN
@@ -81,6 +86,11 @@ def is_patch_dump(data):
 
 
 # ---- Decoding ----------------------------------------------------------------
+
+def patch_bytes(data):
+    """The 340 payload bytes of a dump, for comparison or re-sending."""
+    return tuple(data[PATCH_DATA_OFFSET:])
+
 
 def decode_patch(data):
     """Decode a patch dump into a dict. `data` excludes F0/F7."""
