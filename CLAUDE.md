@@ -161,6 +161,19 @@ and they are expected to survive into later phases.
 - `library.json` sits next to the script and is gitignored. It is a cache, never
   a source of truth: the display re-reads the current patch on every slot change
   and corrects the cached name when it differs.
+- **A wedged Circuit needs a power cycle, not a USB replug.** Seen once, on
+  2026-09-01, after three scan attempts in close succession (two full 64-slot
+  runs, then a third that failed at its capture step): the Circuit stopped
+  answering `40h` dump requests altogether. It was the device, not the host —
+  the request kept arriving (`/proc/asound/card2/midi0` Tx rising 9 bytes per
+  request) with nothing coming back, no process held `/dev/snd/midiC2D0`, and
+  `aconnect -l` showed no subscribers on the Circuit's port. Unplugging USB
+  re-enumerated it (new devnum, new device nodes) and did **not** help: the
+  Circuit is self-powered, so pulling USB never resets the unit. Power-cycling
+  the Circuit itself fixed it instantly. The rapid repeated scans are the
+  suspect, unconfirmed — reproducing it means deliberately wedging the
+  instrument. **If dumps go silent, power-cycle the Circuit before debugging
+  the host.**
 - Don't commit Novation's PDF or any purchased patch pack.
 
 ## Testing
@@ -187,22 +200,31 @@ sequential. Nothing here is committed to a schedule.
 
 ### Immediate
 
-The scanner has now been run successfully against the real Circuit — a full
-64-slot scan behaved as designed, so the default `SCAN_STEP_S` (35 ms) and
-`PC_DUMP_DELAY_S` (20 ms) are known-good on v1.8 firmware and shouldn't be
-lowered without re-testing on hardware.
+The scanner has now been run repeatedly against the real Circuit — five full
+64-slot scans across both synths, every one returning 64/64 with no gaps — so
+the default `SCAN_STEP_S` (35 ms) and `PC_DUMP_DELAY_S` (20 ms) are known-good
+on v1.8 firmware and shouldn't be lowered without re-testing on hardware. Dump
+replies come back in about 5 ms, so there is real headroom over the guide's
+20 ms minimum. A scan of one synth takes 6–8 s.
+
+Verified on 2026-09-01:
+
+- **The unsaved-edits restore path works on hardware.** Scanning with unsaved
+  tweaks in play found no byte-for-byte match, so the scanner wrote the captured
+  bytes back into the live sound and the footer read `sound restored, but the
+  slot on the Circuit may not match`. Bill confirmed by ear that the sound came
+  back. This had only ever passed in `test_scanner.py` before.
+- **No slots left "not scanned"** in any of the five runs. Worth a glance after
+  future scans, but 35 ms is no longer suspect.
 
 Still open:
 
-- **Confirm the unsaved-edits restore path on hardware.** It passes in
-  `test_scanner.py`, but has not been seen live: scan while the current sound
-  has unsaved tweaks and check that the sound comes back and the footer warns
-  about the slot number.
-- **Check mod-matrix routes against real patches.** They have only been seen on
-  two; longer route names may need better abbreviations in the 157 px card.
-- **Watch for slots left "not scanned"** across repeated scans. One or two would
-  suggest raising `SCAN_STEP_S`; consistent gaps at the same slots would mean
-  something else.
+- **Check mod-matrix routes against real patches.** Now seen on real patches and
+  resolving correctly — `direct → osc1&2 pitch` with a muted `MM2` suffix, and
+  four-destination macros falling back to one line each. The truncation concern
+  is real, though: a four-slot macro on `Kick Designer` renders as
+  `filter env → nois…` in the 157 px card. Longer route names may need better
+  abbreviations rather than a plain ellipsis.
 
 ### Phase A — pack import
 
