@@ -71,6 +71,13 @@ rather than guessed.
 
 Tunables are at the top of `circuit_display.py`.
 
+## Hardware
+
+The planned standalone build runs this on a Raspberry Pi 3 or 4 with a 7″
+800×480 DSI touchscreen. Live talks to the Circuit over DIN MIDI; the Pi only
+hosts the Circuit's USB port for the display. Wiring: `docs/wiring.svg`. Specs and
+phases are in `CLAUDE.md`.
+
 ## Working on this
 
 `CLAUDE.md` holds the project context: verified protocol facts, the reasoning

@@ -14,14 +14,16 @@ no way to know what a knob does on the current patch, and no way to see what the
 both.
 
 Owner: Bill Van Loo, an electronic musician in Ypsilanti. The Circuit sits in a
-hardware studio built around Ableton Live; Live is the master clock and the
-Circuit connects to the studio Mac over USB.
+hardware studio built around Ableton Live; Live is the master clock. Today the
+Circuit connects to the studio Mac over USB. In the planned hardware build, Live
+reaches the Circuit over DIN MIDI instead and the Pi takes the Circuit's USB port
+— see Hardware.
 
 Current state: a working macOS prototype covering the macro display and a
 read-only patch library. Several further phases have been discussed and deferred
 rather than ruled out — see Roadmap. The 800×480 window size is not
 arbitrary — it is the native resolution of the 7" DSI panel this will eventually
-run on, attached to a Raspberry Pi 4. Do not change the window dimensions or the
+run on, attached to a Raspberry Pi 3 or 4. Do not change the window dimensions or the
 layout will stop fitting the target hardware.
 
 ## Protocol facts
@@ -37,7 +39,8 @@ datasheet. Trust them.
   the Circuit replies with a 350-byte Replace Current Patch message.
   Location is `0` for Synth 1, `1` for Synth 2.
 - Replies are **only ever sent to the USB port**, never to MIDI DIN. This is why
-  the eventual Pi build has to be the Circuit's USB host.
+  the Pi has to be the Circuit's USB host, and why Live moves to DIN rather than
+  the other way round.
 - Patch byte layout (offsets into the 340-byte payload): name 0–15 ASCII,
   category 16, genre 17, mod matrix from 124 (20 slots × 4 bytes),
   macros from 204 (8 knobs × 17 bytes = position + 4 × (dest, start, end, depth)).
@@ -151,10 +154,14 @@ and they are expected to survive into later phases.
 - **Use `pygame-ce`, not `pygame`.** Bill runs Python 3.14; the original pygame
   has no 3.14 wheels, so pip compiles from source and produces a build with no
   font module. The two packages both install as `pygame` and cannot coexist.
-- On macOS, CoreMIDI lets this app and Live hold the Circuit's port at the same
-  time. **ALSA on the Pi will not**, which is why the eventual Pi build needs
-  the USB gadget bridge described below. Don't assume the current topology
-  carries over.
+- On macOS, CoreMIDI lets this app and Live hold the Circuit's USB port at the
+  same time, which is how the prototype is developed. On the Pi that question
+  doesn't arise: Live is on DIN, so this program is the only thing using the
+  Circuit's USB port.
+- **The scan's program changes are real MIDI on the Circuit.** If the Circuit
+  echoes received program changes to its DIN out and a Live track is recording
+  that input, a scan would record 64 patch changes. Unverified either way;
+  don't scan while recording the Circuit until it's checked.
 - Sysex timing is real. `SCAN_STEP_S` (35 ms) and `PC_DUMP_DELAY_S` (20 ms) have
   margin over the documented minimums. If dumps come back empty or garbled on
   hardware, raise these first.
@@ -264,31 +271,62 @@ shortcuts are the current stand-in and the GPIO/touch handlers should call the
 same actions rather than duplicating logic. An encoder was floated for scrolling
 a patch browser if one ever needs scrolling.
 
-### Hardware phases
+### Hardware
 
-Planned in detail, not started. Bill owns a Pi 4 (any RAM; "Pi 4" and "Pi 4
-Model B" are the same board).
+Planned in detail, not started. Topology decided 2026-10-13.
 
-1. **Parts.** Hosyond 7" DSI touchscreen, 800×480, capacitive, connects via the
-   DSI ribbon so both USB roles stay free. Unlike the official Raspberry Pi
-   display it draws power *from* the Pi rather than feeding it, so the Pi needs
-   5 V into the GPIO header — a good supply, since that bypasses the Pi's input
-   fuse. Also: 3–4 tactile buttons on GPIO, a USB-C data cable, a USB-A-to-B
-   cable. No case ecosystem fits this panel; the enclosure is bespoke.
-2. **Transparent MIDI bridge.** The Pi becomes the Circuit's USB host (USB-A)
-   and presents itself to the studio Mac as a MIDI gadget over USB-C, via the
-   `dwc2` overlay and `libcomposite`, named something obvious like
-   "Circuit via Pi". An ALSA routing script cross-connects both directions at
-   boot so Live's clock and sequencing pass through untouched, while the display
-   eavesdrops as a third listener. Only the Pi 4 and Pi 400 can do simultaneous
-   host and device modes. **This step is required, not optional**: patch dumps
-   only ever go to the Circuit's USB port, and ALSA won't share it the way
-   CoreMIDI does on the Mac. Bill's Live templates will need re-pointing once.
-3. **Deploy the display.** `--fullscreen`, pygame-ce (ARM wheels exist),
-   autostart. Note the ~20–30 s boot delay before the Circuit is reachable from
-   Live; worth deciding whether the Pi gets its own switch or just stays on.
+**Topology.** Live reaches the Circuit over **DIN MIDI**: Scarlett 6i6 MIDI Out
+→ Circuit MIDI In carries clock, notes and program changes; Circuit MIDI Out →
+Scarlett MIDI In is optional, for recording knob CCs into Live. The Pi plugs into
+the Circuit's **USB** port and is its only host. The Pi has no connection to the
+Mac at all. Diagram: `docs/wiring.svg`.
+
+Consequences worth knowing:
+
+- Live no longer depends on the Pi. The Pi can be off, booting or crashed and
+  sequencing is unaffected.
+- The display program on the Pi works exactly as it does on the Mac: one
+  process holding one USB MIDI port. No bridge, no gadget mode, no ALSA routing.
+- The Pi takes ordinary power from its own supply.
+
+**Specs.**
+
+| Part | Spec |
+|---|---|
+| Computer | Raspberry Pi **3B, 3B+, 3A+ or 4B**. Needs only a DSI port, one USB-A port and the 40-pin header. Bill owns a 4B. |
+| OS | Raspberry Pi OS **64-bit** (Lite + a minimal display stack). pygame-ce publishes 64-bit ARM wheels; on 32-bit it may build from source, which is the font-module failure again. |
+| Display | Hosyond 7″ DSI, 800×480, capacitive, 2.2 W. Video and touch over the DSI ribbon; 5 V from the Pi's header (2-pin lead to pins 4/6, or the board's contacts when the Pi is bolted to its standoffs — one, not both). Mounting holes match Pi 3 and Pi 4, which share a footprint. |
+| Power | Official Pi supply into the Pi's normal power input: 5.1 V 2.5 A micro-USB (Pi 3) or 5.1 V 3 A USB-C (Pi 4). The display is fed from that. Nothing is injected into the header. |
+| Circuit link | USB-A (Pi) → USB-B (Circuit). The Circuit keeps its own power supply. |
+| Live link | Two 5-pin DIN MIDI cables to the Scarlett 6i6 (one if CCs aren't recorded). |
+| Buttons (Phase C) | GPIO 6/13/19/26 (pins 31/33/35/37) to GND on pin 39, internal pull-ups. Clear of I²C, SPI and UART. |
+
+**Before building on it, check:**
+
+- That the Scarlett's MIDI ports are free. If they already drive mmMIDI or
+  anything else, a second interface or a thru box is needed.
+- That the Circuit sends CC and Program Change on USB and DIN at the same time.
+  The display depends on the USB copy. Expected, since it's one output mirrored
+  to both ports, but unverified.
+- That Live isn't echoing the Circuit's DIN input back out to it (MIDI loop).
+- **Pi 3 rendering load.** `Renderer.draw()` redraws the whole screen at 60 fps,
+  which is trivial on a Mac and comfortable on a Pi 4 but untested on a Pi 3.
+  If a Pi 3 runs hot or laggy, lower the frame rate or redraw only on change.
+
+**Phases.**
+
+1. **Parts.** Panel (in hand), Pi, supply, DIN cables, USB-A-to-B cable,
+   3–4 tactile buttons for later. No case ecosystem fits this panel; the
+   enclosure is bespoke. Published references: a frame STL for this exact panel
+   on Printables (model 1316423) and the Elecrow "7inch DSI Display-A" manual,
+   which appears to be the same OEM board (module 192.96 × 110.76 × 20.13 mm,
+   active area 154.21 × 85.92 mm). Measure the actual panel before committing.
+2. **Re-cable Live to DIN** and re-point the Circuit's track in Live from the
+   USB port to the Scarlett's MIDI port. Can be done on the Mac first, before any
+   Pi work, and verified with the macOS prototype still on USB.
+3. **Deploy the display.** `--fullscreen`, pygame-ce, autostart on boot.
 4. **Enclosure.** An angled stand or box sitting behind the Circuit. Bill does
-   woodworking and will lead this; dimensions once the panel is in hand.
+   woodworking and will lead this.
 
 ### Longer shots
 
@@ -313,8 +351,18 @@ Recorded so nobody re-researches them.
   and his iPad tops out below that. It also takes the Circuit off Live entirely,
   since the iPad would have to be the USB host.
 - **ESP32-S3 port** of the existing open-source ESP8266 Circuit patch editor.
-  Boots instantly and is cheap, but can't easily present a second USB MIDI
-  device to the Mac, so the Circuit would have to move to DIN.
+  Originally set aside because it would force the Circuit onto DIN — which is
+  now the plan anyway, so that objection is gone. Still set aside because it
+  can't reasonably drive an 800×480 DSI panel or run the existing Python code.
+- **USB gadget bridge** (the original Pi plan): the Pi as the Circuit's USB host
+  and also a MIDI gadget to the Mac over its USB-C port, forwarding Live's
+  traffic through. Dropped 2026-10-13. Powering the Pi through the GPIO header
+  (needed to keep USB-C free for data) ties the Mac's VBUS to the Pi's 5 V
+  rail; fixing that needs a VBUS-blocking cable. A powered or PD pass-through
+  hub doesn't help — it either back-feeds the same way or turns the Pi into
+  the host on that port, which breaks the gadget link. It also limited the
+  build to a Pi 4 and made Live depend on the Pi being booted. DIN avoids all
+  of it.
 - **Off-the-shelf.** Nothing does this. USB host boxes give routing, not a screen.
 
 ## Working with Bill
